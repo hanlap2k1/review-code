@@ -154,8 +154,6 @@ Tham chiếu tiêu chuẩn: ...
 Đánh giá:
 - ...
 
-và trả về dạng markdown
-
 ## Dữ liệu đầu vào
 Tôi sẽ cung cấp:
 - Commit message
