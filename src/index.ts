@@ -137,8 +137,6 @@ app.get("/review-code", async (req: Request, res: Response) => {
       throw new Error("AI review code thất bại");
     }
 
-    console.log(RES);
-
     // trả về kết quả cho client
     res.send(RES?.choices[0]?.message?.content);
   } catch (e) {
