@@ -22,7 +22,7 @@ Nhiệm vụ của bạn:
 Hãy trả kết quả theo đúng 6 mục sau:
 
 ### 1. Trình độ Dev
-- Kết luận 1 mức: Junior / Middle / Senior / Lead
+- Kết luận 1 mức: Fresher / Junior / Middle / Senior / Lead
 - Phải nêu rõ:
   - Đánh giá ban đầu
   - Có áp dụng AI-Assisted Level Downgrade hay không
