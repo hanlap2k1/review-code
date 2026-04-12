@@ -16,7 +16,7 @@ app.use(express.json());
 dotenv.config();
 
 /** input cho AI */
-interface AIInput {
+export interface AIInput {
   /** prompt của user */
   user_prompt: string;
   /** prompt của system */
@@ -24,29 +24,43 @@ interface AIInput {
 }
 
 /** interface cho AI */
-interface IAI {
+export interface IAI {
   exec(messages: AIInput): Promise<string | undefined | null>;
 }
 
+/** interface lấy metadata từ link commit */
+export interface IGetMetaDataFromLinkCommit {
+  exec(link_commit: string): {
+    OWNER: string;
+    REPO: string;
+    COMMIT_SHA: string;
+  };
+}
+
+/** interface lấy code từ commit git */
+export interface IGetCodeFromCommitGit {
+  exec(link_commit: string, token: string): Promise<string>;
+}
+
+/** interface review code */
+export interface IReviewCode {
+  exec(link_commit: string, token: string, output_format: "MARKDOWN" | "HTML" | "TEXT"): Promise<string | null>;
+}
 
 /** class OpenAI */
-class OPENAI implements IAI {
-  /** instance OpenAI */
-  private open_ai: OpenAI;
-
+export class OPENAI implements IAI {
   constructor(
     private model: string,
-  ) {
-    this.open_ai = new OpenAI({
+    private AI = new OpenAI({
       baseURL: process.env.OPENAI_API_BASE_URL,
       apiKey: process.env.OPENAI_API_KEY,
     })
-  }
+  ) {}
 
-  async exec(messages: AIInput) {
+  async exec(messages: AIInput): Promise<string | undefined | null> {
     try {
       /** kết quả trả về */
-      const RES =  await this.open_ai.chat.completions.create({
+      const RES =  await this.AI.chat.completions.create({
         model: this.model,
         messages: [
           ...(messages.system_prompt ? [{
@@ -69,7 +83,7 @@ class OPENAI implements IAI {
 }
 
 /** lấy metadata từ link commit */
-class GetMetaDataFromLinkCommit {
+export class GetMetaDataFromLinkCommit implements IGetMetaDataFromLinkCommit {
   constructor() {}
 
   exec(link_commit: string) {
@@ -91,11 +105,11 @@ class GetMetaDataFromLinkCommit {
 }
 
 /** lấy code từ commit git */
-class GetCodeFromCommitGit {
+export class GetCodeFromCommitGit implements IGetCodeFromCommitGit {
   constructor(
-    private GET_META_DATA_FROM_LINK_COMMIT = new GetMetaDataFromLinkCommit()) {}
+    private GET_META_DATA_FROM_LINK_COMMIT: IGetMetaDataFromLinkCommit = new GetMetaDataFromLinkCommit()) {}
 
-  async exec(link_commit: string, token: string) {
+  async exec(link_commit: string, token: string): Promise<string> {
     try {
       // lấy các thông tin từ link commit
       const { OWNER, REPO, COMMIT_SHA } = this.GET_META_DATA_FROM_LINK_COMMIT.exec(link_commit)
@@ -119,19 +133,19 @@ class GetCodeFromCommitGit {
 }
 
 /** review code */
-class ReviewCode {
+export class ReviewCode implements IReviewCode {
   constructor(
     /** openai */
-    private AI = new OPENAI("openai/gpt-oss-120b:free"),
+    private AI: IAI = new OPENAI("openai/gpt-oss-120b:free"),
     /** lấy code từ commit git */
-    private GET_CODE_FROM_COMMIT_GIT = new GetCodeFromCommitGit(),
+    private GET_CODE_FROM_COMMIT_GIT: IGetCodeFromCommitGit = new GetCodeFromCommitGit(),
   ) {}
 
   async exec(
     link_commit: string, 
     token: string, 
     output_format: "MARKDOWN" | "HTML" | "TEXT"
-  ) {
+  ): Promise<string | null> {
     try {
       // lấy code từ commit git
       const CODE = await this.GET_CODE_FROM_COMMIT_GIT.exec(link_commit, token);
@@ -143,10 +157,10 @@ class ReviewCode {
         TEXT: "Output kết quả trả về dạng text",
       };
 
-      return await this.AI.exec({
+      return (await this.AI.exec({
         system_prompt: PROMPT + OUTPUT_FORMAT[output_format],
         user_prompt: `Dưới đây là commit cần review:\n\n${CODE}`,
-      })
+      })) ?? null
     } catch (e) {
       throw e;
     }
@@ -195,6 +209,9 @@ app.get("/review-code", async (req: Request, res: Response) => {
   }
 });
 
-app.listen(PORT, () => {
-  console.log(`Server running at http://localhost:${PORT}`);
-});
+// nếu file này là file chính thì chạy server
+if (require.main === module) {
+  app.listen(PORT, () => {
+    console.log(`Server running at http://localhost:${PORT}`);
+  });
+}
