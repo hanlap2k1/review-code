@@ -23,41 +23,84 @@ export interface AIInput {
   system_prompt?: string;
 }
 
+/** output của AI */
+interface AIOutput {
+  /** output của AI */
+  output: string | undefined | null;
+}
+
 /** interface cho AI */
 export interface IAI {
-  exec(messages: AIInput): Promise<string | undefined | null>;
+  exec(messages: AIInput): Promise<AIOutput>;
+}
+
+
+/** Output của get metadata from link commit */
+export interface GetMetaDataFromLinkCommitOutput {
+  /** chủ sở hữu repo */
+  OWNER: string;
+  /** tên repo */
+  REPO: string;
+  /** commit sha */
+  COMMIT_SHA: string;
 }
 
 /** interface lấy metadata từ link commit */
 export interface IGetMetaDataFromLinkCommit {
-  exec(link_commit: string): {
-    OWNER: string;
-    REPO: string;
-    COMMIT_SHA: string;
-  };
+  exec(link_commit: string): GetMetaDataFromLinkCommitOutput;
+}
+
+/** Input của get code from commit git */
+export interface GetCodeFromCommitGitInput {
+  /** link commit */
+  link_commit: string;
+  /** token */
+  token: string;
+}
+
+/** Output của get code from commit git */
+export interface GetCodeFromCommitGitOutput {
+  /** code từ commit git */
+  code: string;
 }
 
 /** interface lấy code từ commit git */
 export interface IGetCodeFromCommitGit {
-  exec(link_commit: string, token: string): Promise<string>;
+  exec(input: GetCodeFromCommitGitInput): Promise<GetCodeFromCommitGitOutput>;
+}
+
+/** Input của review code */
+export interface ReviewCodeInput {
+  /** link commit */
+  link_commit: string[];
+  /** token */
+  token: string;
+  /** output format */
+  output_format: "MARKDOWN" | "HTML" | "TEXT";
+}
+
+/** Output của review code */
+export interface ReviewCodeOutput {
+  /** output của review code */
+  output: string | undefined | null;
 }
 
 /** interface review code */
 export interface IReviewCode {
-  exec(link_commit: string, token: string, output_format: "MARKDOWN" | "HTML" | "TEXT"): Promise<string | null>;
+  exec(input: ReviewCodeInput): Promise<ReviewCodeOutput>;
 }
 
 /** class OpenAI */
 export class OPENAI implements IAI {
   constructor(
     private model: string,
-    private AI = new OpenAI({
+    private AI: OpenAI = new OpenAI({
       baseURL: process.env.OPENAI_API_BASE_URL,
       apiKey: process.env.OPENAI_API_KEY,
     })
   ) {}
 
-  async exec(messages: AIInput): Promise<string | undefined | null> {
+  async exec(messages: AIInput): Promise<AIOutput> {
     try {
       /** kết quả trả về */
       const RES =  await this.AI.chat.completions.create({
@@ -75,7 +118,9 @@ export class OPENAI implements IAI {
       });
 
       // trả về nội dung của AI
-      return RES?.choices[0]?.message?.content;
+      return {
+        output: RES?.choices[0]?.message?.content,
+      };
     } catch (e) {
       throw e;
     }
@@ -109,23 +154,25 @@ export class GetCodeFromCommitGit implements IGetCodeFromCommitGit {
   constructor(
     private GET_META_DATA_FROM_LINK_COMMIT: IGetMetaDataFromLinkCommit = new GetMetaDataFromLinkCommit()) {}
 
-  async exec(link_commit: string, token: string): Promise<string> {
+  async exec(input: GetCodeFromCommitGitInput): Promise<GetCodeFromCommitGitOutput> {
     try {
       // lấy các thông tin từ link commit
-      const { OWNER, REPO, COMMIT_SHA } = this.GET_META_DATA_FROM_LINK_COMMIT.exec(link_commit)
+      const { OWNER, REPO, COMMIT_SHA } = this.GET_META_DATA_FROM_LINK_COMMIT.exec(input.link_commit)
 
       /** kết quả trả về */
       const RES = await fetch(
         `https://api.github.com/repos/${OWNER}/${REPO}/commits/${COMMIT_SHA}`,
         {
           headers: {
-            Authorization: `Bearer ${token}`,
+            Authorization: `Bearer ${input.token}`,
             Accept: "application/vnd.github.diff",
           },
         },
       );
 
-      return await RES.text();
+      return {
+        code: await RES.text(),
+      };
     } catch (e) {
       throw e;
     }
@@ -142,13 +189,24 @@ export class ReviewCode implements IReviewCode {
   ) {}
 
   async exec(
-    link_commit: string, 
-    token: string, 
-    output_format: "MARKDOWN" | "HTML" | "TEXT"
-  ): Promise<string | null> {
+    input: ReviewCodeInput
+  ): Promise<ReviewCodeOutput> {
     try {
-      // lấy code từ commit git
-      const CODE = await this.GET_CODE_FROM_COMMIT_GIT.exec(link_commit, token);
+      /** danh sách code từ các commit git */
+      const CODES = await Promise.all(
+        input.link_commit.map(async (link_commit) => {
+          /** code từ từng commit git */
+          const CODE = await this.GET_CODE_FROM_COMMIT_GIT.exec({
+            link_commit,
+            token: input.token,
+          });
+
+          return {
+            link_commit,
+            code: CODE.code,
+          };
+        })
+      );
 
       /** các dạng output */
       const OUTPUT_FORMAT = {
@@ -157,9 +215,14 @@ export class ReviewCode implements IReviewCode {
         TEXT: "Output kết quả trả về dạng text",
       };
 
+      /** nội dung commit được ghép lại để review */
+      const USER_PROMPT = CODES.map((item, index) => {
+        return `Commit ${index + 1}: ${item.link_commit}\n\n${item.code}`;
+      }).join("\n\n====================\n\n");
+
       return (await this.AI.exec({
-        system_prompt: PROMPT + OUTPUT_FORMAT[output_format],
-        user_prompt: `Dưới đây là commit cần review:\n\n${CODE}`,
+        system_prompt: PROMPT + OUTPUT_FORMAT[input.output_format],
+        user_prompt: `Dưới đây là các commit cần review:\n\n${USER_PROMPT}`,
       })) ?? null
     } catch (e) {
       throw e;
@@ -176,7 +239,7 @@ app.get("/", (req: Request, res: Response) => {
 app.get("/review-code", async (req: Request, res: Response) => {
   try {
     const { link_commit, token, output_format = "TEXT" } = req.query as {
-      link_commit?: string;
+      link_commit?: string | string[];
       token?: string;
       output_format?: "MARKDOWN" | "HTML" | "TEXT";
     };
@@ -192,7 +255,11 @@ app.get("/review-code", async (req: Request, res: Response) => {
     }
 
     /** kết quả AI trả về */
-    const RES = await new ReviewCode().exec(link_commit, token, output_format);
+    const RES = await new ReviewCode().exec({
+      link_commit: Array.isArray(link_commit) ? link_commit : [link_commit],
+      token,
+      output_format,
+    });
 
     // nếu không có kết quả của AI trả về thì báo lỗi
     if (!RES) {
