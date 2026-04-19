@@ -1,8 +1,9 @@
 import express, { Request, Response } from "express";
 import OpenAI from "openai";
-import { PROMPT } from "./prompt";
 import dotenv from "dotenv";
 import { GetCodeFromCommitGit, GetCodeFromPullRequest, IGetCodeFromCommitGit, IGetCodeFromPullRequest } from "./GetCodeFromGit";
+import { IPromptBuilder, ReviewPromptBuilder } from "./ReviewPromtBuilder";
+import fs from 'fs'
 
 /** khởi tạo search */
 const app = express();
@@ -77,19 +78,20 @@ export class OPENAI implements IAI {
     })
   ) {}
 
-  async exec(messages: AIInput): Promise<AIOutput> {
+  async exec(params: AIInput): Promise<AIOutput> {
     try {
       /** kết quả trả về */
       const RES =  await this.AI.chat.completions.create({
         model: this.model,
+
         messages: [
-          ...(messages.system_prompt ? [{
+          ...(params.system_prompt ? [{
             role: "system" as const,
-            content: messages.system_prompt,
+            content: params.system_prompt,
           }] : []),
           {
             role: "user" as const,
-            content: messages.user_prompt,
+            content: params.user_prompt,
           },
         ],
       });
@@ -113,6 +115,8 @@ export class ReviewCode implements IReviewCode {
     private GET_CODE_FROM_COMMIT_GIT: IGetCodeFromCommitGit = new GetCodeFromCommitGit(),
     /** lấy code từ pull request */
     private GET_CODE_FROM_PULL_REQUEST: IGetCodeFromPullRequest = new GetCodeFromPullRequest(),
+    /** dựng prompt review code */
+    private PROMPT_BUILDER: IPromptBuilder = new ReviewPromptBuilder(),
   ) {}
 
   async exec(
@@ -129,8 +133,8 @@ export class ReviewCode implements IReviewCode {
           });
 
           return {
-            link_commit,
-            code: CODE.code,
+            url: link_commit,
+            diff_text: CODE.code,
           };
         })
       );
@@ -145,34 +149,28 @@ export class ReviewCode implements IReviewCode {
           });
 
           return {
-            link_pull_request,
-            code: CODE.code,
+            url: link_pull_request,
+            diff_text: CODE.code,
           };
         })
       );
       
+      /** style code */
+      const STYLE_CODE = fs.readFileSync('./src/coding-standards.md', 'utf-8');
 
-      /** các dạng output */
-      const OUTPUT_FORMAT = {
-        MARKDOWN: "Output kết quả trả về dạng markdown",
-        HTML: "Output kết quả trả về dạng html",
-        TEXT: "Output kết quả trả về dạng text",
+      /** prompt của review code */
+      const PROMPT_REVIEW_CODE = this.PROMPT_BUILDER.build(
+        [...CODES_FROM_COMMIT, ...CODES_FROM_PULL_REQUEST],
+        STYLE_CODE,
+        input.output_format,
+      );
+
+      /** kết quả AI */
+      const RESULT = await this.AI.exec(PROMPT_REVIEW_CODE);
+
+      return {
+        output: RESULT?.output,
       };
-
-      /** nội dung commit được ghép lại để review */
-      const USER_PROMPT_COMMIT = CODES_FROM_COMMIT.map((item, index) => {
-        return `Commit ${index + 1}: ${item.link_commit}\n\n${item.code}`;
-      }).join("\n\n====================\n\n");
-
-      /** nội dung pull request được ghép lại để review */
-      const USER_PROMPT_PULL_REQUEST = CODES_FROM_PULL_REQUEST.map((item, index) => {
-        return `Pull Request ${index + 1}: ${item.link_pull_request}\n\n${item.code}`;
-      }).join("\n\n====================\n\n");
-
-      return (await this.AI.exec({
-        system_prompt: PROMPT + OUTPUT_FORMAT[input.output_format],
-        user_prompt: `Dưới đây là các commit cần review:\n\n${USER_PROMPT_COMMIT}\n\n${USER_PROMPT_PULL_REQUEST}`,
-      })) ?? null
     } catch (e) {
       throw e;
     }
