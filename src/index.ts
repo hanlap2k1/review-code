@@ -1,9 +1,19 @@
+import "reflect-metadata";
 import express, { Request, Response } from "express";
 import OpenAI from "openai";
 import dotenv from "dotenv";
-import { GetCodeFromCommitGit, GetCodeFromPullRequest, IGetCodeFromCommitGit, IGetCodeFromPullRequest } from "./GetCodeFromGit";
+import { container, inject, injectable } from "tsyringe";
+import {
+  GetCodeFromCommitGit,
+  GetCodeFromPullRequest,
+  IGetCodeFromCommitGit,
+  IGetCodeFromPullRequest,
+} from "./GetCodeFromGit";
 import { IPromptBuilder, ReviewPromptBuilder } from "./ReviewPromtBuilder";
-import fs from 'fs'
+import fs from "fs";
+
+// load file .env
+dotenv.config();
 
 /** khởi tạo search */
 const app = express();
@@ -14,8 +24,37 @@ const PORT = 3000;
 /** middlewares */
 app.use(express.json());
 
-// load file .env
-dotenv.config();
+/** model OpenAI mặc định */
+const DEFAULT_OPENAI_MODEL = "openai/gpt-oss-120b:free";
+
+/** token dùng để inject model OpenAI */
+const KEY_OPENAI_MODEL = Symbol("OpenAIModel");
+
+/** token dùng để inject OpenAI client */
+const KEY_OPENAI_CLIENT = Symbol("OpenAIClient");
+
+/** token dùng để inject AI service */
+const KEY_AI = Symbol("AI");
+
+/** token dùng để inject service lấy code từ commit */
+const KEY_GET_CODE_FROM_COMMIT_GIT = Symbol("GetCodeFromCommitGit");
+
+/** token dùng để inject service lấy code từ pull request */
+const KEY_GET_CODE_FROM_PULL_REQUEST = Symbol("GetCodeFromPullRequest");
+
+/** token dùng để inject prompt builder */
+const KEY_PROMPT_BUILDER = Symbol("PromptBuilder");
+
+/** token dùng để inject review code service */
+const KEY_REVIEW_CODE = Symbol("ReviewCode");
+
+/** tạo OpenAI client từ biến môi trường */
+function createOpenAIClient(): OpenAI {
+  return new OpenAI({
+    baseURL: process.env.OPENAI_API_BASE_URL,
+    apiKey: process.env.OPENAI_API_KEY,
+  });
+}
 
 /** input cho AI */
 export interface AIInput {
@@ -39,9 +78,9 @@ export interface IAI {
 /** Input của review code */
 export interface ReviewCodeInput {
   /** link commit */
-  link_commit: string[];
+  link_commit?: string[];
   /** link pull request */
-  link_pull_request: string[];
+  link_pull_request?: string[];
   /** token */
   token: string;
   /** output format */
@@ -69,13 +108,13 @@ function normalizeLinks(value?: string | string[]): string[] {
 }
 
 /** class OpenAI */
+@injectable()
 export class OPENAI implements IAI {
   constructor(
-    private model: string,
-    private AI: OpenAI = new OpenAI({
-      baseURL: process.env.OPENAI_API_BASE_URL,
-      apiKey: process.env.OPENAI_API_KEY,
-    })
+    /** model OpenAI */
+    @inject(KEY_OPENAI_MODEL) private model: string = DEFAULT_OPENAI_MODEL,
+    /** OpenAI client */
+    @inject(KEY_OPENAI_CLIENT) private AI: OpenAI = createOpenAIClient()
   ) {}
 
   async exec(params: AIInput): Promise<AIOutput> {
@@ -107,15 +146,19 @@ export class OPENAI implements IAI {
 }
 
 /** review code */
+@injectable()
 export class ReviewCode implements IReviewCode {
   constructor(
     /** openai */
-    private AI: IAI = new OPENAI("openai/gpt-oss-120b:free"),
+    @inject(KEY_AI) private AI: IAI = new OPENAI(),
     /** lấy code từ commit git */
+    @inject(KEY_GET_CODE_FROM_COMMIT_GIT)
     private GET_CODE_FROM_COMMIT_GIT: IGetCodeFromCommitGit = new GetCodeFromCommitGit(),
     /** lấy code từ pull request */
+    @inject(KEY_GET_CODE_FROM_PULL_REQUEST)
     private GET_CODE_FROM_PULL_REQUEST: IGetCodeFromPullRequest = new GetCodeFromPullRequest(),
     /** dựng prompt review code */
+    @inject(KEY_PROMPT_BUILDER)
     private PROMPT_BUILDER: IPromptBuilder = new ReviewPromptBuilder(),
   ) {}
 
@@ -123,9 +166,20 @@ export class ReviewCode implements IReviewCode {
     input: ReviewCodeInput
   ): Promise<ReviewCodeOutput> {
     try {
+      /** danh sách link commit đã chuẩn hóa */
+      const LINK_COMMIT = input.link_commit ?? [];
+
+      /** danh sách link pull request đã chuẩn hóa */
+      const LINK_PULL_REQUEST = input.link_pull_request ?? [];
+
+      // nếu không có link commit và pull request thì báo lỗi
+      if (LINK_COMMIT.length === 0 && LINK_PULL_REQUEST.length === 0) {
+        throw new Error("Thiếu link commit hoặc link pull request");
+      }
+
       /** danh sách code từ các commit git */
       const CODES_FROM_COMMIT = await Promise.all(
-        input.link_commit.map(async (link_commit) => {
+        LINK_COMMIT.map(async (link_commit) => {
           /** code từ từng commit git */
           const CODE = await this.GET_CODE_FROM_COMMIT_GIT.exec({
             link_commit,
@@ -141,7 +195,7 @@ export class ReviewCode implements IReviewCode {
 
       /** danh sách code từ các pull request */
       const CODES_FROM_PULL_REQUEST = await Promise.all(
-        input.link_pull_request.map(async (link_pull_request) => {
+        LINK_PULL_REQUEST.map(async (link_pull_request) => {
           /** code từ pull request */
           const CODE = await this.GET_CODE_FROM_PULL_REQUEST.exec({
             link_pull_request,
@@ -177,6 +231,41 @@ export class ReviewCode implements IReviewCode {
   }
 }
 
+/** đăng ký model OpenAI mặc định */
+container.register<string>(KEY_OPENAI_MODEL, {
+  useValue: DEFAULT_OPENAI_MODEL,
+});
+
+/** đăng ký OpenAI client */
+container.register<OpenAI>(KEY_OPENAI_CLIENT, {
+  useFactory: () => createOpenAIClient(),
+});
+
+/** đăng ký AI service */
+container.register<IAI>(KEY_AI, {
+  useClass: OPENAI,
+});
+
+/** đăng ký service lấy code từ commit */
+container.register<IGetCodeFromCommitGit>(KEY_GET_CODE_FROM_COMMIT_GIT, {
+  useClass: GetCodeFromCommitGit,
+});
+
+/** đăng ký service lấy code từ pull request */
+container.register<IGetCodeFromPullRequest>(KEY_GET_CODE_FROM_PULL_REQUEST, {
+  useClass: GetCodeFromPullRequest,
+});
+
+/** đăng ký prompt builder */
+container.register<IPromptBuilder>(KEY_PROMPT_BUILDER, {
+  useClass: ReviewPromptBuilder,
+});
+
+/** đăng ký review code service */
+container.register<IReviewCode>(KEY_REVIEW_CODE, {
+  useClass: ReviewCode,
+});
+
 // api hello world
 app.get("/", (req: Request, res: Response) => {
   res.send("Hello World!");
@@ -185,7 +274,7 @@ app.get("/", (req: Request, res: Response) => {
 // api review code
 app.post("/review-code", async (req: Request, res: Response) => {
   try {
-    const { link_commit, link_pull_request , token, output_format = "TEXT" } = req.body as {
+    const { link_commit, link_pull_request, token, output_format = "TEXT" } = req.body as {
       link_commit?: string | string[];
       link_pull_request?: string | string[];
       token?: string;
@@ -202,8 +291,11 @@ app.post("/review-code", async (req: Request, res: Response) => {
       throw new Error("Thiếu token");
     }
 
+    /** service review code được resolve từ DI container */
+    const REVIEW_CODE = container.resolve<IReviewCode>(KEY_REVIEW_CODE);
+
     /** kết quả AI trả về */
-    const RES = await new ReviewCode().exec({
+    const RES = await REVIEW_CODE.exec({
       link_commit: normalizeLinks(link_commit),
       link_pull_request: normalizeLinks(link_pull_request),
       token,

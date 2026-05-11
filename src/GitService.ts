@@ -1,4 +1,16 @@
+
+/** key lớp parse link github dùng chung */
+export const PARSE_GITHUB_CODE_LINK_KEY = Symbol("ParseGithubCodeLink")
+/** key lớp kiểm tra xem file có nên bỏ hay không */
+export const SHOULD_EXCLUDE_FILE_KEY = Symbol("ShouldExcludeFile")
+/** key lớp kiểm tra xem đoạn thay đổi có giá trị để review hay không */
+export const HAS_USEFUL_PATCH_KEY = Symbol("HasUsefulPatch")
+
+
 //#region lấy metadata từ link commit
+
+import { inject, injectable } from "tsyringe";
+
 /** Output của get metadata from link commit */
 export interface GetMetaDataFromLinkCommitOutput {
   /** chủ sở hữu repo */
@@ -15,11 +27,14 @@ export interface IGetMetaDataFromLinkCommit {
 }
 
 /** lấy metadata từ link commit */
+@injectable()
 export class GetMetaDataFromLinkCommit implements IGetMetaDataFromLinkCommit {
-  /** service parse link github dùng chung */
-  private PARSE_GITHUB_CODE_LINK: IParseGithubCodeLink = new ParseGithubCodeLink();
-
-  constructor() {}
+  constructor(
+    @inject(PARSE_GITHUB_CODE_LINK_KEY)
+    /** service parse link github dùng chung */
+    private PARSE_GITHUB_CODE_LINK: IParseGithubCodeLink = new ParseGithubCodeLink()
+  ) {
+  }
 
   /**
    * lấy metadata từ link commit
@@ -58,8 +73,9 @@ export interface IShouldExcludeFile {
 }
 
 /** class kiểm tra xem file có nên bỏ hay không */
+
 export class ShouldExcludeFile implements IShouldExcludeFile {
-  constructor() {}
+  constructor() { }
 
   exec(filename: string) {
     /** danh sách file và folder nên bỏ khi review */
@@ -106,7 +122,7 @@ export interface IHasUsefulPatch {
 
 /** class kiểm tra xem đoạn thay đổi có giá trị để review hay không */
 export class HasUsefulPatch implements IHasUsefulPatch {
-  constructor() {}
+  constructor() { }
 
   exec(patch: string) {
     /** nếu không có patch thì return false */
@@ -270,11 +286,13 @@ export interface IGetMetaDataFromLinkPullRequest {
 }
 
 /** lấy metadata từ link pull request */
+@injectable()
 export class GetMetaDataFromLinkPullRequest implements IGetMetaDataFromLinkPullRequest {
-  /** service parse link github dùng chung */
-  private PARSE_GITHUB_CODE_LINK: IParseGithubCodeLink = new ParseGithubCodeLink();
-
-  constructor() {}
+  constructor(
+    @inject(PARSE_GITHUB_CODE_LINK_KEY)
+    /** service parse link github dùng chung */
+    private PARSE_GITHUB_CODE_LINK: IParseGithubCodeLink = new ParseGithubCodeLink()
+  ) { }
 
   /**
    * lấy metadata từ link pull request
@@ -309,7 +327,7 @@ export class GetMetaDataFromLinkPullRequest implements IGetMetaDataFromLinkPullR
 }
 //#endregion
 
-//#region lấy các code thay để để review từ các files git trả về
+//#region lấy các code thay đổi review từ các files git trả về
 /** dữ liệu của file thay đổi */
 export interface GithubCommitFile {
   /** tên file */
@@ -320,16 +338,19 @@ export interface GithubCommitFile {
   patch?: string;
 }
 
-/** interface lấy các code thay để để review từ các files git trả về */
+/** interface lấy các code thay đổi review từ các files git trả về */
 export interface IGetCodeFromFiles {
   exec(files: GithubCommitFile[]): string;
 }
 
-/** class lấy các code thay để để review từ các files git trả về */
+/** class lấy các code thay đã đổi review từ các files git trả về */
+@injectable()
 export class GetCodeFromFiles implements IGetCodeFromFiles {
   constructor(
+    @inject(SHOULD_EXCLUDE_FILE_KEY)
     /** service kiểm tra xem file có nên bỏ khi view hay không */
     private SHOULD_EXCLUDE_FILE: IShouldExcludeFile = new ShouldExcludeFile(),
+    @inject(HAS_USEFUL_PATCH_KEY)
     /** service kiểm tra xem đoạn thay đổi có giá trị để review hay không */
     private HAS_USEFUL_PATCH: IHasUsefulPatch = new HasUsefulPatch(),
   ) {}
@@ -362,7 +383,7 @@ export class GetCodeFromFiles implements IGetCodeFromFiles {
         patch: file.patch!,
       });
     }
-    
+
     /** code review */
     const CODE = REVIEWABLE_FILES.map((file) =>
       [

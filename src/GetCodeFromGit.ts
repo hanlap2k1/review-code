@@ -28,10 +28,10 @@ interface IGetGithubFilesFromLink {
 
 /** class lấy danh sách file thay đổi từ link github */
 class GetGithubFilesFromLink implements IGetGithubFilesFromLink {
-  /** service parse link github dùng chung */
-  private PARSE_GITHUB_CODE_LINK: IParseGithubCodeLink = new ParseGithubCodeLink()
-
-  constructor() {}
+  constructor(
+    /** service parse link github dùng chung */
+    private PARSE_GITHUB_CODE_LINK: IParseGithubCodeLink = new ParseGithubCodeLink()
+  ) {}
 
   /**
    * lấy danh sách file thay đổi từ link github
